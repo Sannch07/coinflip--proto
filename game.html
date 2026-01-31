@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Coinflip</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+  <link rel="stylesheet" href="style.css"/>
+  <link rel="icon" href="images/il_fullxfull.3970511576_ae0q.webp" type="image/webp">
+</head>
+<body>
+
+<div class="container">
+  <h1>Coinflip</h1>
+
+  <div class="balance">
+    Your balance: <span id="balance">100</span> coins
+  </div>
+
+  <div id="createSection">
+    <div class="input-group">
+      <input id="betInput" type="number" placeholder="Bet amount" value="10" min="1" />
+    </div>
+
+    <div class="side-choice">
+      <p>I bet on:</p>
+      <button class="side-btn heads-btn" data-side="heads">
+        <i class="fas fa-circle"></i> Heads
+      </button>
+      <button class="side-btn tails-btn" data-side="tails">
+        <i class="fas fa-circle"></i> Tails
+      </button>
+    </div>
+
+    <button class="create-btn" id="createBtn" disabled onclick="createGame()">
+      <i class="fas fa-plus"></i> Create Game
+    </button>
+  </div>
+
+  <div id="joinSection">
+    <div class="input-group" style="margin-top: 2rem;">
+      <input id="joinId" placeholder="Enter Game ID" />
+      <button class="join-btn" onclick="joinGame()">
+        <i class="fas fa-sign-in-alt"></i> Join Game
+      </button>
+    </div>
+  </div>
+
+  <!-- Coin animation -->
+  <div class="coin-container" id="coinContainer">
+    <div class="coin" id="coin">
+      <div class="coin-side heads">
+        <img src="images/black.jpg.png" alt="Heads (H)">
+      </div>
+      <div class="coin-side tails">
+        <img src="images/red.jpg.png" alt="Tails (T)">
+      </div>
+    </div>
+  </div>
+
+  <div id="status">Choose your side and bet amount to create, or enter Game ID to join</div>
+
+  <button id="flipBtn" class="flip-btn" style="display:none;" onclick="doFlip()">
+    <i class="fas fa-coins"></i> FLIP COIN
+  </button>
+
+  <div class="info">Demo • Fake coins only</div>
+</div>
+
+<script>
+  const socket = io();
+  let currentGameId = null;
+  let isPlaying = false;
+  let mySide = null;
+
+  const balanceEl     = document.getElementById('balance');
+  const statusEl      = document.getElementById('status');
+  const flipBtn       = document.getElementById('flipBtn');
+  const coinContainer = document.getElementById('coinContainer');
+  const coin          = document.getElementById('coin');
+  const createBtn     = document.getElementById('createBtn');
+
+  // Enable "Create Game" when side is chosen
+  document.querySelectorAll('.side-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.side-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      mySide = btn.dataset.side;
+      createBtn.disabled = false;
+      statusEl.innerHTML = `Selected: ${mySide.toUpperCase()}. Now set bet and create!`;
+    });
+  });
+
+  socket.on('connect', () => {
+    statusEl.innerHTML = '<span style="color:#00ff9d">Connected!</span>';
+  });
+
+  socket.on('balanceUpdate', (coins) => {
+    balanceEl.innerText = coins;
+  });
+
+  socket.on('gameCreated', (data) => {
+    currentGameId = data.gameId;
+    statusEl.innerHTML = `
+      Game created!<br>
+      <strong>ID: ${data.gameId}</strong><br>
+      You bet on: <strong style="color:${mySide === 'heads' ? '#00ff9d' : '#ff4d4d'}">
+        ${mySide.toUpperCase()}
+      </strong><br>
+      Waiting for opponent...
+    `;
+    flipBtn.style.display = 'none';
+    coinContainer.style.display = 'none';
+    isPlaying = true;
+  });
+
+  socket.on('gameReady', (data) => {
+    currentGameId = data.gameId;
+    statusEl.innerHTML = `
+      Opponent joined!<br>
+      You bet on: <strong style="color:${mySide === 'heads' ? '#00ff9d' : '#ff4d4d'}">
+        ${mySide.toUpperCase()}
+      </strong><br>
+      <strong>Ready to flip</strong>
+    `;
+    flipBtn.style.display = 'block';
+    coinContainer.style.display = 'none';
+  });
+
+  socket.on('gameResult', (data) => {
+    coinContainer.style.display = 'block';
+    coin.classList.remove('flip-animation', 'win', 'lose');
+    void coin.offsetWidth;
+    coin.classList.add('flip-animation');
+
+    setTimeout(() => {
+      const isWin = (data.outcome.toLowerCase() === mySide);
+      coin.classList.add(isWin ? 'win' : 'lose');
+
+      if (data.outcome.toLowerCase() === 'tails') {
+        coin.classList.add('tails');
+      } else {
+        coin.classList.remove('tails');
+      }
+
+      let colorClass = isWin ? 'win' : 'lose';
+
+      statusEl.innerHTML = `
+        <div class="outcome ${colorClass}">${data.outcome.toUpperCase()}</div>
+        <div class="${colorClass}">
+          ${isWin ? 'You win!' : 'You lose!'}
+        </div>
+        ${isWin
+          ? `You won <strong>${data.winAmount}</strong> coins (fee: ${data.fee})`
+          : `You lost your bet (fee: ${data.fee})`}
+      `;
+
+      flipBtn.style.display = 'none';
+      isPlaying = false;
+
+      setTimeout(() => {
+        coinContainer.style.display = 'none';
+        coin.classList.remove('tails');
+      }, 1800);
+    }, 3200);
+  });
+
+  socket.on('error', (msg) => {
+    statusEl.innerHTML = `<span style="color:#ff4d4d">Error: ${msg}</span>`;
+    flipBtn.style.display = 'none';
+    coinContainer.style.display = 'none';
+  });
+
+  function createGame() {
+    if (isPlaying || !mySide) return;
+    const bet = Number(document.getElementById('betInput').value);
+    if (!bet || bet < 1) {
+      statusEl.innerHTML = '<span style="color:#ff4d4d">Enter valid bet amount</span>';
+      return;
+    }
+    socket.emit('createGame', { bet, side: mySide });
+  }
+
+  function joinGame() {
+    if (isPlaying) return;
+    const gameId = document.getElementById('joinId').value.trim();
+    if (!gameId) {
+      statusEl.innerHTML = '<span style="color:#ff4d4d">Enter Game ID</span>';
+      return;
+    }
+    socket.emit('joinGame', { gameId });
+  }
+
+  function doFlip() {
+    if (!currentGameId) return;
+    socket.emit('flip', { gameId: currentGameId });
+  }
+</script>
+</body>
+</html>
